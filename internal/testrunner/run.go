@@ -33,11 +33,7 @@ type RunConfig struct {
 }
 
 func Run(pkg Package, testName string, dir string, config RunConfig) (<-chan RunResult, error) {
-	args := buildArgs(config)
-
-	if testName != "" {
-		args = append(args, "-run", testName)
-	}
+	args := []string{"test", "-json", "-run", testName}
 
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
@@ -47,17 +43,12 @@ func Run(pkg Package, testName string, dir string, config RunConfig) (<-chan Run
 		return nil, err
 	}
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
-
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 
 	results := make(chan RunResult)
-	go parseJSONOutput(stdout, stderr, results, config)
+	go parseOutput(stdout, results, config)
 
 	go func() {
 		cmd.Wait()
@@ -68,7 +59,11 @@ func Run(pkg Package, testName string, dir string, config RunConfig) (<-chan Run
 }
 
 func RunPackage(pkg Package, dir string, config RunConfig) (<-chan RunResult, error) {
-	args := buildArgs(config)
+	args := []string{"test", "-json"}
+	if config.Verbose {
+		args = []string{"test", "-v", "-json"}
+	}
+	args = append(args, pkg.ImportPath)
 
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
@@ -78,19 +73,14 @@ func RunPackage(pkg Package, dir string, config RunConfig) (<-chan RunResult, er
 		return nil, err
 	}
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
-
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 
 	results := make(chan RunResult)
-	go parseJSONOutput(stdout, stderr, results, config)
 
 	go func() {
+		parseOutput(stdout, results, config)
 		cmd.Wait()
 		close(results)
 	}()
@@ -99,7 +89,10 @@ func RunPackage(pkg Package, dir string, config RunConfig) (<-chan RunResult, er
 }
 
 func RunAll(packages []Package, dir string, config RunConfig) (<-chan RunResult, error) {
-	args := buildArgs(config)
+	args := []string{"test", "-json"}
+	if config.Verbose {
+		args = []string{"test", "-v", "-json"}
+	}
 	args = append(args, "./...")
 
 	cmd := exec.Command("go", args...)
@@ -110,19 +103,14 @@ func RunAll(packages []Package, dir string, config RunConfig) (<-chan RunResult,
 		return nil, err
 	}
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
-
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 
 	results := make(chan RunResult)
-	go parseJSONOutput(stdout, stderr, results, config)
 
 	go func() {
+		parseOutput(stdout, results, config)
 		cmd.Wait()
 		close(results)
 	}()
@@ -130,24 +118,9 @@ func RunAll(packages []Package, dir string, config RunConfig) (<-chan RunResult,
 	return results, nil
 }
 
-func buildArgs(config RunConfig) []string {
-	args := []string{"test", "-json"}
-
-	switch config.OutputFormat {
-	case "verbose":
-		args = []string{"test", "-v", "-json"}
-	case "summary":
-		args = []string{"test", "-json"}
-	case "quiet":
-		args = []string{"test", "-json"}
-	}
-
-	return args
-}
-
-func parseJSONOutput(stdout io.Reader, stderr io.Reader, results chan RunResult, config RunConfig) {
+func parseOutput(stdout io.Reader, results chan RunResult, config RunConfig) {
 	scanner := bufio.NewScanner(stdout)
-	var currentTest, currentPackage, currentOutput string
+	var currentTest string
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -162,45 +135,38 @@ func parseJSONOutput(stdout io.Reader, stderr io.Reader, results chan RunResult,
 
 		switch event.Action {
 		case "run":
-			if currentTest != "" {
-				results <- RunResult{
-					Package:  currentPackage,
-					TestName: currentTest,
-					Status:   "running",
-				}
+			if event.Test != "" {
+				currentTest = event.Test
 			}
-			currentTest = event.Test
-			currentPackage = event.Package
-			currentOutput = ""
 
 		case "output":
-			if config.ShowOutput {
-				currentOutput += event.Output
+			if config.ShowOutput && event.Output != "" {
+				results <- RunResult{
+					Package:  event.Package,
+					TestName: event.Test,
+					Status:   "output",
+					Output:   event.Output,
+				}
 			}
 
 		case "pass", "fail", "skip":
 			duration := time.Duration(event.Elapsed * float64(time.Second))
+			testName := event.Test
+			if testName == "" {
+				testName = currentTest
+			}
+			if testName == "" {
+				continue
+			}
 			results <- RunResult{
-				Package:  currentPackage,
-				TestName: currentTest,
+				Package:  event.Package,
+				TestName: testName,
 				Status:   event.Action,
 				Duration: duration,
-				Output:   currentOutput,
+				Output:   event.Output,
 			}
-			currentTest = ""
-			currentPackage = ""
-			currentOutput = ""
 
-		case "pause", "cont":
-		}
-	}
-
-	if currentTest != "" {
-		results <- RunResult{
-			Package:  currentPackage,
-			TestName: currentTest,
-			Status:   "unknown",
-			Output:   currentOutput,
+		case "pause", "cont", "start":
 		}
 	}
 }

@@ -31,7 +31,8 @@ type rawPkgInfo struct {
 }
 
 func Discover(rootDir string) ([]Package, error) {
-	modPath := findGoMod(rootDir)
+	absDir, _ := filepath.Abs(rootDir)
+	modPath := findGoMod(absDir)
 	if modPath == "" {
 		return nil, fmt.Errorf("no go.mod found in %s", rootDir)
 	}
@@ -131,6 +132,7 @@ func Discover(rootDir string) ([]Package, error) {
 }
 
 func findGoMod(dir string) string {
+	dir = filepath.Clean(dir)
 	for {
 		modPath := filepath.Join(dir, "go.mod")
 		if _, err := os.Stat(modPath); err == nil {
