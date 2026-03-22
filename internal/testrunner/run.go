@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -120,7 +121,6 @@ func RunAll(packages []Package, dir string, config RunConfig) (<-chan RunResult,
 
 func parseOutput(stdout io.Reader, results chan RunResult, config RunConfig) {
 	scanner := bufio.NewScanner(stdout)
-	var currentTest string
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -135,8 +135,12 @@ func parseOutput(stdout io.Reader, results chan RunResult, config RunConfig) {
 
 		switch event.Action {
 		case "run":
-			if event.Test != "" {
-				currentTest = event.Test
+			if event.Test != "" && !strings.Contains(event.Test, "/") {
+				results <- RunResult{
+					Package:  event.Package,
+					TestName: event.Test,
+					Status:   "running",
+				}
 			}
 
 		case "output":
@@ -152,10 +156,7 @@ func parseOutput(stdout io.Reader, results chan RunResult, config RunConfig) {
 		case "pass", "fail", "skip":
 			duration := time.Duration(event.Elapsed * float64(time.Second))
 			testName := event.Test
-			if testName == "" {
-				testName = currentTest
-			}
-			if testName == "" {
+			if testName == "" || strings.Contains(testName, "/") {
 				continue
 			}
 			results <- RunResult{
