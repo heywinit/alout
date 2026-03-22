@@ -139,22 +139,31 @@ func run() {
 		}
 
 		for result := range results {
-			saveHistory(result)
-
 			switch result.Status {
+			case "output":
+				if verbose && result.Output != "" {
+					fmt.Print(result.Output)
+				}
+			case "running":
+				if verbose {
+					fmt.Printf("  ... %s\n", result.TestName)
+				}
 			case "pass":
 				pass++
+				saveHistory(result)
 				if verbose {
 					fmt.Printf("  %s %s\n", green("✓"), result.TestName)
 				}
 			case "fail":
 				fail++
+				saveHistory(result)
 				fmt.Printf("  %s %s\n", red("✗"), result.TestName)
 				if verbose && result.Output != "" {
 					fmt.Println(result.Output)
 				}
 			case "skip":
 				skip++
+				saveHistory(result)
 				if verbose {
 					fmt.Printf("  %s %s\n", gray("-"), result.TestName)
 				}
@@ -183,22 +192,31 @@ func runPackage(pkg testrunner.Package, dir string, config testrunner.RunConfig)
 	}
 
 	for result := range results {
-		if result.Status == "output" {
-			continue
-		}
-		saveHistory(result)
-
 		switch result.Status {
+		case "output":
+			if config.ShowOutput && result.Output != "" {
+				fmt.Print(result.Output)
+			}
+		case "running":
+			if config.Verbose {
+				fmt.Printf("  ... %s\n", result.TestName)
+			}
 		case "pass":
 			pass++
+			saveHistory(result)
 			if config.Verbose {
 				fmt.Printf("  %s %s\n", green("✓"), result.TestName)
 			}
 		case "fail":
 			fail++
+			saveHistory(result)
 			fmt.Printf("  %s %s\n", red("✗"), result.TestName)
+			if config.Verbose && result.Output != "" {
+				fmt.Print(result.Output)
+			}
 		case "skip":
 			skip++
+			saveHistory(result)
 			fmt.Printf("  %s %s\n", gray("-"), result.TestName)
 		}
 	}
