@@ -28,9 +28,10 @@ type TestEvent struct {
 }
 
 type RunConfig struct {
-	Verbose      bool
-	ShowOutput   bool
-	OutputFormat string
+	Verbose       bool
+	VerboseFailed bool
+	ShowOutput    bool
+	OutputFormat  string
 }
 
 func Run(pkg Package, testName string, dir string, config RunConfig) (<-chan RunResult, error) {

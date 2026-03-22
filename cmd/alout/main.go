@@ -44,16 +44,17 @@ Usage:
   alout history [limit]         Show test history
 
 Flags:
-  -v, --verbose    Show test output
-  -f, --filter     Filter by name
-  --format         Output format (summary, verbose, json)
+  -v, --verbose       Show all test output
+  -vf, --verbose-failed  Show output only for failed tests
+  -f, --filter        Filter by name
+  --format            Output format (summary, verbose, json)
 
 Examples:
   alout run                      # Run all tests
   alout run ./internal/foo        # Run specific package
-  alout run -f TestAdd           # Run tests matching filter
+  alout run -vf                  # Show output only for failed tests
+  alout run -v                   # Show all test output
   alout list                     # List all tests
-  alout list math                # List tests matching "math"
   alout history                  # Show recent test history`)
 }
 
@@ -62,6 +63,7 @@ func run() {
 
 	var filter string
 	var verbose bool
+	var verboseFailed bool
 	var format string
 	var target string
 
@@ -70,6 +72,8 @@ func run() {
 		switch arg {
 		case "-v", "--verbose":
 			verbose = true
+		case "-vf", "--verbose-failed":
+			verboseFailed = true
 		case "-f", "--filter":
 			if i+1 < len(args) {
 				filter = args[i+1]
@@ -119,9 +123,10 @@ func run() {
 	pass, fail, skip := 0, 0, 0
 
 	config := testrunner.RunConfig{
-		Verbose:      verbose,
-		ShowOutput:   verbose,
-		OutputFormat: format,
+		Verbose:       verbose,
+		VerboseFailed: verboseFailed,
+		ShowOutput:    verbose || verboseFailed,
+		OutputFormat:  format,
 	}
 
 	if target != "" && filter == "" {
@@ -138,19 +143,35 @@ func run() {
 			os.Exit(1)
 		}
 
+		type testOutput struct {
+			output strings.Builder
+			failed bool
+		}
+		testOutputs := make(map[string]*testOutput)
+
 		for result := range results {
 			switch result.Status {
 			case "output":
-				if verbose && result.Output != "" {
+				if verbose {
 					fmt.Print(result.Output)
+				} else if verboseFailed && result.TestName != "" {
+					name := result.TestName
+					if idx := strings.LastIndex(name, "/"); idx > 0 {
+						name = name[:idx]
+					}
+					if to, ok := testOutputs[name]; ok {
+						to.output.WriteString(result.Output)
+					}
 				}
 			case "running":
+				testOutputs[result.TestName] = &testOutput{}
 				if verbose {
 					fmt.Printf("  ... %s\n", result.TestName)
 				}
 			case "pass":
 				pass++
 				saveHistory(result)
+				delete(testOutputs, result.TestName)
 				if verbose {
 					fmt.Printf("  %s %s\n", green("✓"), result.TestName)
 				}
@@ -158,12 +179,19 @@ func run() {
 				fail++
 				saveHistory(result)
 				fmt.Printf("  %s %s\n", red("✗"), result.TestName)
-				if verbose && result.Output != "" {
-					fmt.Println(result.Output)
+				if to, ok := testOutputs[result.TestName]; ok {
+					if to.output.Len() > 0 {
+						fmt.Print(to.output.String())
+					}
+					delete(testOutputs, result.TestName)
+				}
+				if result.Output != "" {
+					fmt.Print(result.Output)
 				}
 			case "skip":
 				skip++
 				saveHistory(result)
+				delete(testOutputs, result.TestName)
 				if verbose {
 					fmt.Printf("  %s %s\n", gray("-"), result.TestName)
 				}
@@ -191,19 +219,35 @@ func runPackage(pkg testrunner.Package, dir string, config testrunner.RunConfig)
 		return
 	}
 
+	type testOutput struct {
+		output strings.Builder
+		failed bool
+	}
+	testOutputs := make(map[string]*testOutput)
+
 	for result := range results {
 		switch result.Status {
 		case "output":
-			if config.ShowOutput && result.Output != "" {
+			if config.Verbose {
 				fmt.Print(result.Output)
+			} else if config.VerboseFailed && result.TestName != "" {
+				name := result.TestName
+				if idx := strings.LastIndex(name, "/"); idx > 0 {
+					name = name[:idx]
+				}
+				if to, ok := testOutputs[name]; ok {
+					to.output.WriteString(result.Output)
+				}
 			}
 		case "running":
+			testOutputs[result.TestName] = &testOutput{}
 			if config.Verbose {
 				fmt.Printf("  ... %s\n", result.TestName)
 			}
 		case "pass":
 			pass++
 			saveHistory(result)
+			delete(testOutputs, result.TestName)
 			if config.Verbose {
 				fmt.Printf("  %s %s\n", green("✓"), result.TestName)
 			}
@@ -211,13 +255,22 @@ func runPackage(pkg testrunner.Package, dir string, config testrunner.RunConfig)
 			fail++
 			saveHistory(result)
 			fmt.Printf("  %s %s\n", red("✗"), result.TestName)
-			if config.Verbose && result.Output != "" {
+			if to, ok := testOutputs[result.TestName]; ok {
+				if to.output.Len() > 0 {
+					fmt.Print(to.output.String())
+				}
+				delete(testOutputs, result.TestName)
+			}
+			if result.Output != "" {
 				fmt.Print(result.Output)
 			}
 		case "skip":
 			skip++
 			saveHistory(result)
-			fmt.Printf("  %s %s\n", gray("-"), result.TestName)
+			delete(testOutputs, result.TestName)
+			if config.Verbose {
+				fmt.Printf("  %s %s\n", gray("-"), result.TestName)
+			}
 		}
 	}
 
