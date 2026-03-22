@@ -2,66 +2,37 @@ package tui
 
 import (
 	"fmt"
-	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
-	_ "github.com/heywinit/alout/internal/testrunner"
 )
 
 func (m Model) View() tea.View {
-	var content string
+	var s string
 
-	if m.ShowHistory {
-		content = m.viewHistory()
-	} else {
-		var b strings.Builder
-
-		b.WriteString(m.viewHeader())
-		b.WriteString("\n")
-		b.WriteString(m.viewTestList())
-		b.WriteString("\n")
-		b.WriteString(m.viewFooter())
-
-		content = b.String()
-	}
-
-	return tea.View{Content: content}
-}
-
-func (m Model) viewHeader() string {
-	var b strings.Builder
-
-	title := " alout "
+	s += Title.Render("alout")
 	if m.IsRunning {
-		title += "[running]"
+		s += " [running]"
 	}
+	s += "\n"
 
-	total, pass, fail, skip, running := m.GetStats()
-	stats := fmt.Sprintf(" total: %d | pass: %d | fail: %d | skip: %d | running: %d ",
-		total, pass, fail, skip, running)
-
-	b.WriteString(fmt.Sprintf("%s%s\n", TitleStyle.Render(title), StatsStyle.Render(stats)))
+	total, pass, fail, skip, _ := m.GetStats()
+	s += Stats.Render(fmt.Sprintf(" total: %d | pass: %d | fail: %d | skip: %d\n", total, pass, fail, skip))
 
 	if m.FilterQuery != "" {
-		b.WriteString(fmt.Sprintf(" filter: %s ", FilterInputStyle.Render(m.FilterQuery)))
+		s += fmt.Sprintf(" filter: %s\n", m.FilterQuery)
 	}
 
-	return b.String()
-}
-
-func (m Model) viewTestList() string {
-	var b strings.Builder
+	s += "\n"
 
 	packages := m.GetVisiblePackages()
 	if len(packages) == 0 {
-		return "  No tests found. Press 'r' to refresh."
+		s += "  No tests found.\n"
+		return tea.View{Content: s}
 	}
 
 	for pkgIdx, pkg := range packages {
-		isExpanded := m.IsPackageExpanded(pkgIdx)
 		arrow := ">"
-		if !isExpanded {
+		if !m.IsPackageExpanded(pkgIdx) {
 			arrow = "v"
 		}
 
@@ -70,161 +41,71 @@ func (m Model) viewTestList() string {
 			testCount += len(tf.Tests)
 		}
 
-		pkgLine := fmt.Sprintf(" %s %s (%d tests)", arrow, pkg.ImportPath, testCount)
+		prefix := " "
 		if pkgIdx == m.SelectedPackage {
-			pkgLine = PackageStyle.Inline(true).Render(pkgLine)
-		} else {
-			pkgLine = PackageStyle.Render(pkgLine)
+			prefix = "*"
 		}
 
-		b.WriteString(pkgLine)
-		b.WriteString("\n")
+		s += fmt.Sprintf("%s%s %s (%d)\n", prefix, arrow, pkg.ImportPath, testCount)
 
-		if !isExpanded {
+		if !m.IsPackageExpanded(pkgIdx) {
 			continue
 		}
 
 		for fileIdx, tf := range pkg.TestFiles {
-			isFileExpanded := m.IsFileExpanded(pkgIdx, fileIdx)
 			fileArrow := "+"
-			if !isFileExpanded {
+			if !m.IsFileExpanded(pkgIdx, fileIdx) {
 				fileArrow = "-"
 			}
 
-			fileLine := fmt.Sprintf("   %s %s (%d tests)", fileArrow, tf.Path, len(tf.Tests))
+			filePrefix := "   "
 			if pkgIdx == m.SelectedPackage && m.SelectedFile == fileIdx {
-				fileLine = FileStyle.Inline(true).Render(fileLine)
-			} else {
-				fileLine = FileStyle.Render(fileLine)
+				filePrefix = " * "
 			}
-			b.WriteString(fileLine)
-			b.WriteString("\n")
 
-			if !isFileExpanded {
+			s += fmt.Sprintf("%s%s %s\n", filePrefix, fileArrow, tf.Path)
+
+			if !m.IsFileExpanded(pkgIdx, fileIdx) {
 				continue
 			}
 
 			for testIdx, testName := range tf.Tests {
 				result := m.GetTestResult(pkg.ImportPath, testName)
+
+				testPrefix := "     "
+				if pkgIdx == m.SelectedPackage && m.SelectedFile == fileIdx && m.SelectedTest == testIdx {
+					testPrefix = ">>> "
+				}
+
 				statusStr := ""
-				statusStyle := TestStyle
+				style := TestStyle
 
 				switch result.Status {
 				case "pass":
-					statusStr = " ✓"
-					statusStyle = StatusPassStyle
+					statusStr = " [PASS]"
+					style = TestPass
 				case "fail":
-					statusStr = " ✗"
-					statusStyle = StatusFailStyle
+					statusStr = " [FAIL]"
+					style = TestFail
 				case "skip":
-					statusStr = " -"
-					statusStyle = StatusSkipStyle
-				default:
-					if _, running := m.RunningTests[m.GetTestKey(pkg.ImportPath, testName)]; running {
-						statusStr = " ..."
-						statusStyle = StatusRunningStyle
-					}
+					statusStr = " [SKIP]"
+					style = TestSkip
 				}
 
-				if result.Duration > 0 {
-					statusStr += fmt.Sprintf(" (%.2fs)", result.Duration.Seconds())
-				}
-
-				testLine := fmt.Sprintf("     %s%s", testName, statusStr)
-				if pkgIdx == m.SelectedPackage && m.SelectedFile == fileIdx && m.SelectedTest == testIdx {
-					testLine = TestSelectedStyle.Render(testLine)
-				} else {
-					testLine = statusStyle.Inline(true).Render(testLine)
-				}
-				b.WriteString(testLine)
-				b.WriteString("\n")
+				s += style.Render(fmt.Sprintf("%s%s%s\n", testPrefix, testName, statusStr))
 			}
 		}
 	}
 
-	return b.String()
-}
-
-func (m Model) viewFooter() string {
-	var b strings.Builder
-
-	b.WriteString(HelpStyle.Render("\n"))
-	b.WriteString(HelpStyle.Render(" "))
-	b.WriteString(HelpKeyStyle.Render("[↑/↓]"))
-	b.WriteString(HelpStyle.Render(" navigate "))
-	b.WriteString(HelpKeyStyle.Render("[←/→]"))
-	b.WriteString(HelpStyle.Render(" expand "))
-	b.WriteString(HelpKeyStyle.Render("[enter]"))
-	b.WriteString(HelpStyle.Render(" run "))
-	b.WriteString(HelpKeyStyle.Render("[r]"))
-	b.WriteString(HelpStyle.Render(" run all "))
-	b.WriteString(HelpKeyStyle.Render("[f]"))
-	b.WriteString(HelpStyle.Render(" filter "))
-	b.WriteString(HelpKeyStyle.Render("[h]"))
-	b.WriteString(HelpStyle.Render(" history "))
-	b.WriteString(HelpKeyStyle.Render("[q]"))
-	b.WriteString(HelpStyle.Render(" quit"))
+	s += "\n"
+	s += HelpKey.Render("[r]") + HelpStyle.Render(" run  ")
+	s += HelpKey.Render("[f]") + HelpStyle.Render(" filter  ")
+	s += HelpKey.Render("[h]") + HelpStyle.Render(" history  ")
+	s += HelpKey.Render("[q]") + HelpStyle.Render(" quit\n")
 
 	if m.StatusMessage != "" {
-		b.WriteString("\n")
-		b.WriteString(HelpStyle.Render(" " + m.StatusMessage))
+		s += "\n" + m.StatusMessage
 	}
 
-	return b.String()
-}
-
-func (m Model) viewHistory() string {
-	var b strings.Builder
-
-	b.WriteString(fmt.Sprintf("%s\n", TitleStyle.Render(" alout - test history ")))
-	b.WriteString(HelpStyle.Render("\n"))
-	b.WriteString(HelpStyle.Render(" "))
-	b.WriteString(HelpKeyStyle.Render("[↑/↓]"))
-	b.WriteString(HelpStyle.Render(" navigate "))
-	b.WriteString(HelpKeyStyle.Render("[b]"))
-	b.WriteString(HelpStyle.Render(" back "))
-	b.WriteString(HelpKeyStyle.Render("[q]"))
-	b.WriteString(HelpStyle.Render(" quit"))
-
-	b.WriteString("\n\n")
-
-	if len(m.HistoryRuns) == 0 {
-		b.WriteString("  No test history yet.\n")
-		return b.String()
-	}
-
-	for i, run := range m.HistoryRuns {
-		statusStr := ""
-		statusStyle := StatusPassStyle
-		switch run.Status {
-		case "pass":
-			statusStr = "✓"
-		case "fail":
-			statusStr = "✗"
-			statusStyle = StatusFailStyle
-		case "skip":
-			statusStr = "-"
-			statusStyle = StatusSkipStyle
-		}
-
-		timeStr := run.Timestamp.Format("2006-01-02 15:04:05")
-		durationStr := time.Duration(run.Duration * 1e6).String()
-
-		line := fmt.Sprintf(" %s  %s  %s  %s (%s)",
-			statusStyle.Render(statusStr),
-			run.TestName,
-			run.Package,
-			timeStr,
-			durationStr,
-		)
-
-		if i == m.HistoryPage {
-			line = HistoryItemStyle.Inline(true).Background(ColorHighlight).Render(line)
-		}
-
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-
-	return b.String()
+	return tea.View{Content: s}
 }
